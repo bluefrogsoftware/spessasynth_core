@@ -88,13 +88,14 @@ export class SynthesizerCore {
 
     private pruneNoteInstances() {
         for (const [id, layers] of this.noteInstances) {
-            if (
-                [...layers].every(
-                    (voice) => !voice.isActive || voice.instanceId !== id
-                )
-            ) {
-                this.noteInstances.delete(id);
+            let active = false;
+            for (const voice of layers) {
+                if (voice.isActive && voice.instanceId === id) {
+                    active = true;
+                    break;
+                }
             }
+            if (!active) this.noteInstances.delete(id);
         }
     }
 

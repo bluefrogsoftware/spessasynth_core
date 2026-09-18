@@ -67,14 +67,6 @@ export function noteOn(
         // Overwrite the note with MIDI tuning standard!
         soundBankNote = Math.trunc(tune);
 
-    // Monophonic retrigger
-    if (
-        (this._systemParameters.monophonicRetrigger ??
-            this.synthCore.systemParameters.monophonicRetrigger) ||
-        this._midiParameters.assignMode === 0
-    )
-        this.killNote(midiNote);
-
     // Key velocity override
     const keyVel = this.synthCore.keyModifierManager.getVelocity(
         this.channel,
@@ -115,18 +107,17 @@ export function noteOn(
 
         portaFromKey = previousNote;
         portaTime = portamentoTimeToSeconds(portamentoTime, keyDistance);
-
-        this.portamentoForce = false;
     }
 
+    const voices = this.synthCore.getVoices(
+        this.channel,
+        soundBankNote,
+        realVelocity
+    );
+
     // Reject an attack that exceeds the voice cap before channel note state changes.
-    // A failed attack must not steal any voice from another instance.
     if (instance && !this.synthCore.systemParameters.autoAllocateVoices) {
-        const required = this.synthCore.getVoices(
-            this.channel,
-            soundBankNote,
-            realVelocity
-        ).length;
+        const required = voices.length;
         const cap = this.synthCore.systemParameters.voiceCap;
         if (required > cap) {
             throw new Error(
@@ -135,26 +126,30 @@ export function noteOn(
         }
     }
 
+    if (canApplyPortamento) this.portamentoForce = false;
+
+    // Instance attacks are controlled by identity, outside the MIDI key queue.
+    if (
+        !instance &&
+        ((this._systemParameters.monophonicRetrigger ??
+            this.synthCore.systemParameters.monophonicRetrigger) ||
+            this._midiParameters.assignMode === 0)
+    )
+        this.killNote(midiNote);
+
     // Always track the last note, even if portamento isn't applied.
     // See: https://github.com/spessasus/spessasynth_core/issues/77
     this.lastPortamentoNote = midiNote;
 
-    this.playingNotes[midiNote] = true;
+    if (!instance) this.playingNotes[midiNote] = true;
 
     // Mono mode
-    if (!this._midiParameters.polyMode) {
+    if (!instance && !this._midiParameters.polyMode) {
         if (this.lastMonoNote >= 0 && this.lastMonoNote !== midiNote)
             this.killNote(this.lastMonoNote);
         this.lastMonoNote = midiNote;
         this.lastMonoVelocity = velocity;
     }
-
-    // Get voices
-    const voices = this.synthCore.getVoices(
-        this.channel,
-        soundBankNote,
-        realVelocity
-    );
 
     // Overrides
     // Zero means disabled
@@ -202,7 +197,11 @@ export function noteOn(
         if (voiceGain === 1) voiceGain = p.gain;
     }
 
-    const noteID = emit ? this.noteOnID[midiNote]++ : this.noteOnID[midiNote];
+    const noteID = instance
+        ? -1
+        : emit
+          ? this.noteOnID[midiNote]++
+          : this.noteOnID[midiNote];
 
     // Add voices
     for (const cached of voices) {
