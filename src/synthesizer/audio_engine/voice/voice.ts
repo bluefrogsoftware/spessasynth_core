@@ -103,6 +103,12 @@ export class Voice {
      */
     public isActive = false;
 
+    /** Attack identity, independent of the MIDI key and voice slot. */
+    public instanceId?: number;
+
+    /** A voice-local pitch wheel that remains live during the release tail. */
+    public instancePitchWheel?: number;
+
     /**
      * Indicates if the voice has rendered at least one buffer.
      * Used for exclusive class to prevent killing voices set on the same note.
@@ -295,6 +301,8 @@ export class Voice {
         // Remember to add new values here!!!
         // Clear state
         this.isActive = true;
+        this.instanceId = undefined;
+        this.instancePitchWheel = undefined;
         this.isInRelease = false;
         this.hasRendered = false;
         this.isHeld = false;

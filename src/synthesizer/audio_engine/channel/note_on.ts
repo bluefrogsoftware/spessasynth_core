@@ -24,7 +24,8 @@ export function noteOn(
     this: MIDIChannel,
     midiNote: number,
     velocity: number,
-    emit = true
+    emit = true,
+    instance?: { id: number; initialPitch: number }
 ) {
     if (velocity < 1) {
         this.noteOff(midiNote);
@@ -118,6 +119,22 @@ export function noteOn(
         this.portamentoForce = false;
     }
 
+    // Reject an attack that exceeds the voice cap before channel note state changes.
+    // A failed attack must not steal any voice from another instance.
+    if (instance && !this.synthCore.systemParameters.autoAllocateVoices) {
+        const required = this.synthCore.getVoices(
+            this.channel,
+            soundBankNote,
+            realVelocity
+        ).length;
+        const cap = this.synthCore.systemParameters.voiceCap;
+        if (required > cap) {
+            throw new Error(
+                `Note instance requires ${required} voices but cap is ${cap}`
+            );
+        }
+    }
+
     // Always track the last note, even if portamento isn't applied.
     // See: https://github.com/spessasus/spessasynth_core/issues/77
     this.lastPortamentoNote = midiNote;
@@ -189,9 +206,14 @@ export function noteOn(
 
     // Add voices
     for (const cached of voices) {
-        const voice = this.synthCore.assignVoice();
+        const voice = this.synthCore.assignVoice(instance?.id);
         const now = this.synthCore.currentTime;
         voice.setup(now, this.channel, midiNote, noteID);
+        if (instance) {
+            voice.instanceId = instance.id;
+            voice.instancePitchWheel = instance.initialPitch;
+            this.synthCore.attachVoiceToInstance(instance.id, voice);
+        }
 
         // Select the correct oscillator
         // Channel takes precedence

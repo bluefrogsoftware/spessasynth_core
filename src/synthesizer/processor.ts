@@ -129,6 +129,33 @@ export class SpessaSynthProcessor {
      */
     public readonly noteOff: (channel: number, midiNote: number) => void;
 
+    /** Attack one note with an opaque identity shared by all of its sample layers. */
+    public noteOnInstance(
+        channel: number,
+        midiNote: number,
+        velocity: number,
+        initialPitch: number
+    ): number {
+        return this.synthCore.noteOnInstance(
+            channel,
+            midiNote,
+            velocity,
+            initialPitch
+        );
+    }
+
+    public pitchNoteInstance(id: number, pitch: number): "active" | "ended" {
+        return this.synthCore.pitchNoteInstance(id, pitch);
+    }
+
+    public releaseNoteInstance(id: number): "active" | "ended" {
+        return this.synthCore.releaseNoteInstance(id);
+    }
+
+    public noteInstanceStatus(id: number): "active" | "ended" {
+        return this.synthCore.noteInstanceStatus(id);
+    }
+
     /**
      * Executes a MIDI Poly Pressure (Aftertouch) message on the specified channel.
      * This differs from the Channel Pressure in that it's per-note and not for the whole channel.
