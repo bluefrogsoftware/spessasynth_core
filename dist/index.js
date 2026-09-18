@@ -7725,7 +7725,6 @@ function noteOn(midiNote, velocity, emit = true, instance) {
 	const program = this.preset.program;
 	const tune = this.synthCore.tunings[program * 128 + midiNote];
 	if (tune >= 0) soundBankNote = Math.trunc(tune);
-	if ((this._systemParameters.monophonicRetrigger ?? this.synthCore.systemParameters.monophonicRetrigger) || this._midiParameters.assignMode === 0) this.killNote(midiNote);
 	const keyVel = this.synthCore.keyModifierManager.getVelocity(this.channel, midiNote);
 	if (keyVel > -1) realVelocity = keyVel;
 	let voiceGain = this.synthCore.keyModifierManager.getGain(this.channel, midiNote);
@@ -7739,21 +7738,22 @@ function noteOn(midiNote, velocity, emit = true, instance) {
 		const keyDistance = Math.abs(midiNote - previousNote);
 		portaFromKey = previousNote;
 		portaTime = portamentoTimeToSeconds(portamentoTime, keyDistance);
-		this.portamentoForce = false;
 	}
+	const voices = this.synthCore.getVoices(this.channel, soundBankNote, realVelocity);
 	if (instance && !this.synthCore.systemParameters.autoAllocateVoices) {
-		const required = this.synthCore.getVoices(this.channel, soundBankNote, realVelocity).length;
+		const required = voices.length;
 		const cap = this.synthCore.systemParameters.voiceCap;
 		if (required > cap) throw new Error(`Note instance requires ${required} voices but cap is ${cap}`);
 	}
+	if (canApplyPortamento) this.portamentoForce = false;
+	if (!instance && ((this._systemParameters.monophonicRetrigger ?? this.synthCore.systemParameters.monophonicRetrigger) || this._midiParameters.assignMode === 0)) this.killNote(midiNote);
 	this.lastPortamentoNote = midiNote;
-	this.playingNotes[midiNote] = true;
-	if (!this._midiParameters.polyMode) {
+	if (!instance) this.playingNotes[midiNote] = true;
+	if (!instance && !this._midiParameters.polyMode) {
 		if (this.lastMonoNote >= 0 && this.lastMonoNote !== midiNote) this.killNote(this.lastMonoNote);
 		this.lastMonoNote = midiNote;
 		this.lastMonoVelocity = velocity;
 	}
-	const voices = this.synthCore.getVoices(this.channel, soundBankNote, realVelocity);
 	let panOverride = 0;
 	let exclusiveOverride = 0;
 	let pitchOffset = 0;
@@ -7777,7 +7777,7 @@ function noteOn(midiNote, velocity, emit = true, instance) {
 		delaySend = p.delayGain;
 		if (voiceGain === 1) voiceGain = p.gain;
 	}
-	const noteID = emit ? this.noteOnID[midiNote]++ : this.noteOnID[midiNote];
+	const noteID = instance ? -1 : emit ? this.noteOnID[midiNote]++ : this.noteOnID[midiNote];
 	for (const cached of voices) {
 		const voice = this.synthCore.assignVoice(instance?.id);
 		const now = this.synthCore.currentTime;
@@ -12850,6 +12850,10 @@ var MIDIChannel = class {
 			this.computeModulatorsAll(0, ModulatorControllerSources.pitchWheel);
 		}
 	}
+	/** Recompute the pitch source for one note instance voice only. */
+	updateInstancePitch(voice) {
+		this.computeModulators(voice, 0, ModulatorControllerSources.pitchWheel);
+	}
 	/**
 	* Sets the pressure of the given note on a specific channel.
 	* This is used for polyphonic pressure (aftertouch).
@@ -12857,10 +12861,6 @@ var MIDIChannel = class {
 	* @param pressure 0 - 127, the pressure value to set for the note.
 	* @internal
 	*/
-	/** Recompute the pitch source for one score-owned voice only. */
-	updateInstancePitch(voice) {
-		this.computeModulators(voice, 0, ModulatorControllerSources.pitchWheel);
-	}
 	polyPressure(midiNote, pressure) {
 		let vc = 0;
 		if (this._voiceCount > 0) {
@@ -14908,7 +14908,7 @@ var Voice = class {
 	* If not, it can be used.
 	*/
 	isActive = false;
-	/** Score-owned attack identity, independent of the MIDI key and voice slot. */
+	/** Attack identity, independent of the MIDI key and voice slot. */
 	instanceId;
 	/** A voice-local pitch wheel that remains live during the release tail. */
 	instancePitchWheel;
@@ -19524,7 +19524,14 @@ var SynthesizerCore = class {
 		this.noteInstances.delete(id);
 	}
 	pruneNoteInstances() {
-		for (const [id, layers] of this.noteInstances) if ([...layers].every((voice) => !voice.isActive || voice.instanceId !== id)) this.noteInstances.delete(id);
+		for (const [id, layers] of this.noteInstances) {
+			let active = false;
+			for (const voice of layers) if (voice.isActive && voice.instanceId === id) {
+				active = true;
+				break;
+			}
+			if (!active) this.noteInstances.delete(id);
+		}
 	}
 	activeNoteInstance(id) {
 		if (!Number.isSafeInteger(id) || id < 1 || id >= this.nextNoteInstanceId) throw new Error(`Unknown note instance ${id}`);
@@ -20581,16 +20588,36 @@ var SpessaSynthProcessor = class {
 	* @param midiNote The MIDI note number to stop playing.
 	*/
 	noteOff;
-	/** Attack one note with an opaque identity shared by all of its sample layers. */
+	/**
+	* Attacks one note and returns an opaque identity shared by its sample layers.
+	* The channel is zero-based, MIDI key is 0-127, velocity is 1-127, and
+	* initialPitch is a 14-bit pitch-wheel value (0-16383, center 8192).
+	* Pitch follows the channel's bend range and overrides its wheel for this
+	* attack only. The attack does not enter the MIDI key note-off or mono
+	* pressed-key queues; control it through the returned identity.
+	* If no voice starts (for example a muted channel), the identity is ended.
+	* Invalid arguments and a layered attack above a fixed voice cap throw.
+	*/
 	noteOnInstance(channel, midiNote, velocity, initialPitch) {
 		return this.synthCore.noteOnInstance(channel, midiNote, velocity, initialPitch);
 	}
+	/**
+	* Sets the 14-bit pitch-wheel value for all live layers, including release
+	* tails. Returns "active" while a layer is live or "ended" after all end.
+	* Unknown identities and invalid pitch values throw.
+	*/
 	pitchNoteInstance(id, pitch) {
 		return this.synthCore.pitchNoteInstance(id, pitch);
 	}
+	/**
+	* Starts envelope release on all live layers. Returns "active" while any
+	* layer remains live, including its release tail, or "ended" otherwise.
+	* Unknown identities throw.
+	*/
 	releaseNoteInstance(id) {
 		return this.synthCore.releaseNoteInstance(id);
 	}
+	/** Returns "ended" once every layer stops sounding. Unknown identities throw. */
 	noteInstanceStatus(id) {
 		return this.synthCore.noteInstanceStatus(id);
 	}
