@@ -45,6 +45,110 @@ function render(processor: SpessaSynthProcessor, frames: number) {
     }
 }
 
+void test("an instance release does not consume a normal note-off on the same key", async () => {
+    const processor = await processorWithBank();
+    try {
+        const instance = processor.noteOnInstance(0, 52, 110, CENTER);
+        processor.releaseNoteInstance(instance);
+        processor.noteOn(0, 52, 110);
+        const normalVoice = processor.midiChannels[0].synthCore.voices.find(
+            (voice) =>
+                voice.isActive &&
+                voice.midiNote === 52 &&
+                voice.instanceId === undefined
+        );
+        assert.ok(normalVoice);
+        processor.noteOff(0, 52);
+        render(processor, 2048);
+        assert.equal(normalVoice.isInRelease, true);
+    } finally {
+        processor.destroySynthProcessor();
+    }
+});
+
+void test("instance attacks do not become pressed keys in mono mode", async () => {
+    const processor = await processorWithBank();
+    try {
+        processor.midiChannels[0].setMIDIParameter("polyMode", false);
+        const instance = processor.noteOnInstance(0, 52, 110, CENTER);
+        processor.noteOn(0, 55, 110);
+        processor.noteOff(0, 55);
+        const phantomNormalVoice =
+            processor.midiChannels[0].synthCore.voices.find(
+                (voice) =>
+                    voice.isActive &&
+                    voice.midiNote === 52 &&
+                    voice.instanceId === undefined
+            );
+        assert.equal(phantomNormalVoice, undefined);
+        assert.equal(processor.noteInstanceStatus(instance), "active");
+    } finally {
+        processor.destroySynthProcessor();
+    }
+});
+
+void test("instance pitch changes only its own same-key voice and stays live in release", async () => {
+    const processor = await processorWithBank();
+    try {
+        const first = processor.noteOnInstance(0, 52, 110, CENTER + 2048);
+        const second = processor.noteOnInstance(0, 52, 110, CENTER);
+        const voices = processor.midiChannels[0].synthCore.voices;
+        const firstVoice = voices.find((voice) => voice.instanceId === first);
+        const secondVoice = voices.find((voice) => voice.instanceId === second);
+        assert.ok(firstVoice);
+        assert.ok(secondVoice);
+        const firstPitch =
+            firstVoice.modulatedGenerators[GeneratorTypes.fineTune];
+        const secondPitch =
+            secondVoice.modulatedGenerators[GeneratorTypes.fineTune];
+        assert.notEqual(firstPitch, secondPitch);
+        processor.releaseNoteInstance(first);
+        render(processor, 2048);
+        assert.equal(firstVoice.isInRelease, true);
+        assert.equal(
+            processor.pitchNoteInstance(first, CENTER - 2048),
+            "active"
+        );
+        assert.notEqual(
+            firstVoice.modulatedGenerators[GeneratorTypes.fineTune],
+            firstPitch
+        );
+        assert.equal(
+            secondVoice.modulatedGenerators[GeneratorTypes.fineTune],
+            secondPitch
+        );
+    } finally {
+        processor.destroySynthProcessor();
+    }
+});
+
+void test("a failed layered mono attack does not release its previous voice", async () => {
+    const processor = await processorWithBank();
+    try {
+        processor.setSystemParameter("autoAllocateVoices", false);
+        processor.setSystemParameter("voiceCap", 2);
+        processor.setSystemParameter("monophonicRetrigger", true);
+        const preset = processor.midiChannels[0].preset;
+        assert.ok(preset);
+        preset.zones.push(...preset.zones);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER);
+        const firstVoice = processor.midiChannels[0].synthCore.voices.find(
+            (voice) => voice.instanceId === first
+        );
+        assert.ok(firstVoice);
+        processor.setSystemParameter("voiceCap", 1);
+        assert.throws(
+            () => processor.noteOnInstance(0, 52, 110, CENTER),
+            /requires 2 voices but cap is 1/
+        );
+        assert.equal(firstVoice.releaseStartTime, Infinity);
+        assert.equal(firstVoice.isInRelease, false);
+        assert.equal(processor.noteInstanceStatus(first), "active");
+    } finally {
+        processor.destroySynthProcessor();
+    }
+});
+
 void test("same-key identities retain independent pitch through release", async () => {
     const processor = await processorWithBank();
     try {
@@ -115,8 +219,33 @@ void test("one attack controls every layer of a layered preset", async () => {
         const id = processor.noteOnInstance(0, 52, 110, CENTER);
         render(processor, 128);
         assert.equal(processor.voiceCount, 2);
+        const layers = processor.midiChannels[0].synthCore.voices.filter(
+            (voice) => voice.instanceId === id
+        );
+        assert.equal(layers.length, 2);
+        const initialPitch = layers.map(
+            (voice) => voice.modulatedGenerators[GeneratorTypes.fineTune]
+        );
         assert.equal(processor.pitchNoteInstance(id, CENTER + 512), "active");
+        for (const [index, voice] of layers.entries()) {
+            assert.notEqual(
+                voice.modulatedGenerators[GeneratorTypes.fineTune],
+                initialPitch[index]
+            );
+        }
+        const pitchedLayers = layers.map(
+            (voice) => voice.modulatedGenerators[GeneratorTypes.fineTune]
+        );
         assert.equal(processor.releaseNoteInstance(id), "active");
+        render(processor, 2048);
+        assert.ok(layers.every((voice) => voice.isInRelease));
+        assert.equal(processor.pitchNoteInstance(id, CENTER - 512), "active");
+        for (const [index, voice] of layers.entries()) {
+            assert.notEqual(
+                voice.modulatedGenerators[GeneratorTypes.fineTune],
+                pitchedLayers[index]
+            );
+        }
         assert.equal(processor.noteInstanceStatus(id), "active");
         processor.stopAllChannels(true);
         assert.equal(processor.noteInstanceStatus(id), "ended");
