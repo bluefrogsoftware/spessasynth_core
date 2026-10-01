@@ -25,7 +25,11 @@ export function noteOn(
     midiNote: number,
     velocity: number,
     emit = true,
-    instance?: { id: number; initialPitch: number }
+    instance?: {
+        id: number;
+        initialPitch: number;
+        baseTuningCents: number;
+    }
 ) {
     if (velocity < 1) {
         this.noteOff(midiNote);
@@ -211,6 +215,7 @@ export function noteOn(
         if (instance) {
             voice.instanceId = instance.id;
             voice.instancePitchWheel = instance.initialPitch;
+            voice.instanceBaseTuningCents = instance.baseTuningCents;
             this.synthCore.attachVoiceToInstance(instance.id, voice);
         }
 

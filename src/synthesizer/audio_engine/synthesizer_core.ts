@@ -119,7 +119,8 @@ export class SynthesizerCore {
         channel: number,
         midiNote: number,
         velocity: number,
-        initialPitch: number
+        initialPitch: number,
+        baseTuningCents: number
     ): number {
         if (
             !Number.isInteger(channel) ||
@@ -141,12 +142,18 @@ export class SynthesizerCore {
         ) {
             throw new Error(`Invalid note instance pitch ${initialPitch}`);
         }
+        if (!Number.isFinite(baseTuningCents)) {
+            throw new TypeError(
+                `Invalid note instance base tuning ${baseTuningCents}`
+            );
+        }
         const id = this.nextNoteInstanceId++;
         this.noteInstances.set(id, new Set());
         try {
             this.midiChannels[channel].noteOn(midiNote, velocity, true, {
                 id,
-                initialPitch
+                initialPitch,
+                baseTuningCents
             });
         } catch (error) {
             this.invalidateNoteInstance(id);

@@ -48,7 +48,7 @@ function render(processor: SpessaSynthProcessor, frames: number) {
 void test("an instance release does not consume a normal note-off on the same key", async () => {
     const processor = await processorWithBank();
     try {
-        const instance = processor.noteOnInstance(0, 52, 110, CENTER);
+        const instance = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         processor.releaseNoteInstance(instance);
         processor.noteOn(0, 52, 110);
         const normalVoice = processor.midiChannels[0].synthCore.voices.find(
@@ -70,7 +70,7 @@ void test("instance attacks do not become pressed keys in mono mode", async () =
     const processor = await processorWithBank();
     try {
         processor.midiChannels[0].setMIDIParameter("polyMode", false);
-        const instance = processor.noteOnInstance(0, 52, 110, CENTER);
+        const instance = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         processor.noteOn(0, 55, 110);
         processor.noteOff(0, 55);
         const phantomNormalVoice =
@@ -90,8 +90,8 @@ void test("instance attacks do not become pressed keys in mono mode", async () =
 void test("instance pitch changes only its own same-key voice and stays live in release", async () => {
     const processor = await processorWithBank();
     try {
-        const first = processor.noteOnInstance(0, 52, 110, CENTER + 2048);
-        const second = processor.noteOnInstance(0, 52, 110, CENTER);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER + 2048, 0);
+        const second = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         const voices = processor.midiChannels[0].synthCore.voices;
         const firstVoice = voices.find((voice) => voice.instanceId === first);
         const secondVoice = voices.find((voice) => voice.instanceId === second);
@@ -131,14 +131,14 @@ void test("a failed layered mono attack does not release its previous voice", as
         const preset = processor.midiChannels[0].preset;
         assert.ok(preset);
         preset.zones.push(...preset.zones);
-        const first = processor.noteOnInstance(0, 52, 110, CENTER);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         const firstVoice = processor.midiChannels[0].synthCore.voices.find(
             (voice) => voice.instanceId === first
         );
         assert.ok(firstVoice);
         processor.setSystemParameter("voiceCap", 1);
         assert.throws(
-            () => processor.noteOnInstance(0, 52, 110, CENTER),
+            () => processor.noteOnInstance(0, 52, 110, CENTER, 0),
             /requires 2 voices but cap is 1/
         );
         assert.equal(firstVoice.releaseStartTime, Infinity);
@@ -152,8 +152,8 @@ void test("a failed layered mono attack does not release its previous voice", as
 void test("same-key identities retain independent pitch through release", async () => {
     const processor = await processorWithBank();
     try {
-        const first = processor.noteOnInstance(0, 52, 110, CENTER + 1024);
-        const second = processor.noteOnInstance(0, 52, 110, CENTER);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER + 1024, 0);
+        const second = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         assert.notEqual(first, second);
         assert.equal(processor.noteInstanceStatus(first), "active");
         assert.equal(processor.noteInstanceStatus(second), "active");
@@ -178,8 +178,8 @@ void test("stolen and reused voice slots cannot be controlled through old identi
     try {
         processor.setSystemParameter("autoAllocateVoices", false);
         processor.setSystemParameter("voiceCap", 1);
-        const first = processor.noteOnInstance(0, 52, 110, CENTER);
-        const second = processor.noteOnInstance(0, 52, 110, CENTER + 512);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER, 0);
+        const second = processor.noteOnInstance(0, 52, 110, CENTER + 512, 0);
         assert.equal(processor.noteInstanceStatus(first), "ended");
         assert.equal(processor.pitchNoteInstance(first, CENTER - 512), "ended");
         assert.equal(processor.releaseNoteInstance(first), "ended");
@@ -199,7 +199,7 @@ void test("one-shot sample exhaustion ends its identity without a note-off", asy
     const processor = await processorWithBank(true);
     try {
         processor.midiChannels[0].setDrums(true);
-        const id = processor.noteOnInstance(0, 65, 110, CENTER);
+        const id = processor.noteOnInstance(0, 65, 110, CENTER, 0);
         assert.equal(processor.noteInstanceStatus(id), "active");
         render(processor, RATE * 5);
         assert.equal(processor.noteInstanceStatus(id), "ended");
@@ -216,7 +216,7 @@ void test("one attack controls every layer of a layered preset", async () => {
         // Duplicate the real preset's zones so its existing sample becomes two
         // Simultaneous layers without introducing a new binary sound bank.
         preset.zones.push(...preset.zones);
-        const id = processor.noteOnInstance(0, 52, 110, CENTER);
+        const id = processor.noteOnInstance(0, 52, 110, CENTER, 0);
         render(processor, 128);
         assert.equal(processor.voiceCount, 2);
         const layers = processor.midiChannels[0].synthCore.voices.filter(
@@ -263,7 +263,7 @@ void test("a layered attack above the voice cap fails without an orphaned layer"
         processor.setSystemParameter("autoAllocateVoices", false);
         processor.setSystemParameter("voiceCap", 1);
         assert.throws(
-            () => processor.noteOnInstance(0, 52, 110, CENTER),
+            () => processor.noteOnInstance(0, 52, 110, CENTER, 0),
             /requires 2 voices but cap is 1/
         );
         render(processor, 128);
@@ -279,13 +279,13 @@ void test("a layered attack steals older voices before its own layers", async ()
     try {
         processor.setSystemParameter("autoAllocateVoices", false);
         processor.setSystemParameter("voiceCap", 2);
-        const first = processor.noteOnInstance(0, 52, 110, CENTER);
-        const second = processor.noteOnInstance(0, 53, 110, CENTER);
+        const first = processor.noteOnInstance(0, 52, 110, CENTER, 0);
+        const second = processor.noteOnInstance(0, 53, 110, CENTER, 0);
         const preset = processor.midiChannels[0].preset;
         assert.ok(preset);
         preset.zones.push(...preset.zones);
 
-        const layered = processor.noteOnInstance(0, 54, 110, CENTER);
+        const layered = processor.noteOnInstance(0, 54, 110, CENTER, 0);
         assert.equal(processor.noteInstanceStatus(first), "ended");
         assert.equal(processor.noteInstanceStatus(second), "ended");
         assert.equal(processor.noteInstanceStatus(layered), "active");
@@ -303,14 +303,109 @@ void test("a layered attack steals older voices before its own layers", async ()
 
 void test("reset and destruction end known identities", async () => {
     const processor = await processorWithBank();
-    const first = processor.noteOnInstance(0, 52, 110, CENTER);
+    const first = processor.noteOnInstance(0, 52, 110, CENTER, 0);
     assert.equal(processor.noteInstanceStatus(first), "active");
     processor.reset();
     assert.equal(processor.noteInstanceStatus(first), "ended");
     render(processor, 128);
     assert.equal(processor.voiceCount, 0);
-    const second = processor.noteOnInstance(0, 52, 110, CENTER);
+    const second = processor.noteOnInstance(0, 52, 110, CENTER, 0);
     assert.equal(processor.noteInstanceStatus(second), "active");
     processor.destroySynthProcessor();
     assert.equal(processor.noteInstanceStatus(second), "ended");
+});
+
+void test("instance base tuning applies at attack and stays independent per key instance", async () => {
+    const processor = await processorWithBank();
+    try {
+        const preset = processor.midiChannels[0].preset;
+        assert.ok(preset);
+        preset.zones.push(...preset.zones);
+        const oneCent = processor.noteOnInstance(0, 52, 110, CENTER, 1);
+        const subCent = processor.noteOnInstance(0, 52, 110, CENTER, 0.125);
+        const equalPitch = processor.noteOnInstance(0, 52, 110, CENTER, 0);
+        const voices = processor.midiChannels[0].synthCore.voices;
+        const oneCentVoices = voices.filter((voice) => voice.instanceId === oneCent);
+        const subCentVoices = voices.filter((voice) => voice.instanceId === subCent);
+        const equalPitchVoices = voices.filter(
+            (voice) => voice.instanceId === equalPitch
+        );
+        const oneCentVoice = oneCentVoices[0];
+        const subCentVoice = subCentVoices[0];
+        const equalPitchVoice = equalPitchVoices[0];
+        assert.ok(oneCentVoice);
+        assert.ok(subCentVoice);
+        assert.ok(equalPitchVoice);
+        assert.equal(oneCentVoices.length, 2);
+        assert.equal(subCentVoices.length, 2);
+        assert.equal(equalPitchVoices.length, 2);
+
+        render(processor, 128);
+
+        assert.equal(oneCentVoice.instanceBaseTuningCents, 1);
+        assert.equal(subCentVoice.instanceBaseTuningCents, 0.125);
+        assert.ok(oneCentVoices.every((voice) => voice.instanceBaseTuningCents === 1));
+        assert.ok(subCentVoices.every((voice) => voice.instanceBaseTuningCents === 0.125));
+        assert.ok(
+            Math.abs(
+                oneCentVoice.tuningRatio / equalPitchVoice.tuningRatio -
+                    2 ** (1 / 1200)
+            ) < 1e-12
+        );
+        assert.ok(
+            Math.abs(
+                subCentVoice.tuningRatio / equalPitchVoice.tuningRatio -
+                    2 ** (0.125 / 1200)
+            ) < 1e-12
+        );
+        assert.notEqual(oneCentVoice.tuningRatio, subCentVoice.tuningRatio);
+
+        assert.equal(processor.pitchNoteInstance(oneCent, CENTER + 4096), "active");
+        assert.equal(processor.pitchNoteInstance(subCent, CENTER + 4096), "active");
+        render(processor, 128);
+        assert.ok(
+            Math.abs(
+                oneCentVoice.tuningRatio / subCentVoice.tuningRatio -
+                    2 ** (0.875 / 1200)
+            ) < 1e-12
+        );
+
+        processor.midiChannels[0].reset();
+        render(processor, 128);
+        assert.equal(oneCentVoice.instanceBaseTuningCents, 1);
+        assert.ok(
+            Math.abs(
+                oneCentVoice.tuningRatio / subCentVoice.tuningRatio -
+                    2 ** (0.875 / 1200)
+            ) < 1e-12
+        );
+
+        assert.equal(processor.releaseNoteInstance(oneCent), "active");
+        render(processor, 2048);
+        assert.equal(oneCentVoice.isInRelease, true);
+        assert.equal(oneCentVoice.instanceBaseTuningCents, 1);
+        assert.equal(processor.pitchNoteInstance(oneCent, CENTER), "active");
+        assert.equal(processor.pitchNoteInstance(subCent, CENTER), "active");
+        render(processor, 128);
+        assert.equal(equalPitchVoice.instanceBaseTuningCents, 0);
+        assert.ok(Math.abs(oneCentVoice.tuningRatio / subCentVoice.tuningRatio - 2 ** (0.875 / 1200)) < 1e-12);
+    } finally {
+        processor.destroySynthProcessor();
+    }
+});
+
+void test("instance base tuning requires a finite cents value", async () => {
+    const processor = await processorWithBank();
+    try {
+        assert.throws(
+            () => processor.noteOnInstance(0, 52, 110, CENTER, Number.NaN),
+            /Invalid note instance base tuning/
+        );
+        assert.throws(
+            () => processor.noteOnInstance(0, 52, 110, CENTER, Infinity),
+            /Invalid note instance base tuning/
+        );
+    } finally {
+        processor.destroySynthProcessor();
+    }
 });

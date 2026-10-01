@@ -70,7 +70,8 @@ export function renderVoice(
     let targetKey = voice.targetKey;
     // Calculate tuning
     let cents =
-        voice.pitchOffset + // Voice pitch offset
+        voice.pitchOffset + // Drum pitch offset
+        voice.instanceBaseTuningCents + // Per-instance base tuning
         modulated[GeneratorTypes.fineTune] + // Soundfont fine tune
         this.octaveTuning[targetKey] + // MTS octave tuning
         this.currentTuning; // Channel tuning
@@ -192,11 +193,8 @@ export function renderVoice(
 
     // Finally, calculate the playback rate
     const centsTotal = cents + semitones * 100;
-    const centsRounded = centsTotal | 0;
-    // Round for testing if equal,
-    // But let's allow sub-microtonal tunings, because why not? :-)
-    if (centsRounded !== voice.tuningCents) {
-        voice.tuningCents = centsRounded;
+    if (centsTotal !== voice.tuningCents) {
+        voice.tuningCents = centsTotal;
         voice.tuningRatio = Math.pow(2, centsTotal / 1200);
     }
 

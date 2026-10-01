@@ -6699,7 +6699,7 @@ function renderVoice(voice, timeNow, outputL, outputR, startIndex, sampleCount) 
 	const sampleRate = core.sampleRate;
 	const modulated = voice.modulatedGenerators;
 	let targetKey = voice.targetKey;
-	let cents = voice.pitchOffset + modulated[GeneratorTypes.fineTune] + this.octaveTuning[targetKey] + this.currentTuning;
+	let cents = voice.pitchOffset + voice.instanceBaseTuningCents + modulated[GeneratorTypes.fineTune] + this.octaveTuning[targetKey] + this.currentTuning;
 	let semitones = modulated[GeneratorTypes.coarseTune];
 	const tuning = core.tunings[this.preset.program * 128 + voice.midiNote];
 	if (tuning !== -1) {
@@ -6752,9 +6752,8 @@ function renderVoice(voice, timeNow, outputL, outputR, startIndex, sampleCount) 
 	}
 	volumeExcursionCentibels -= voice.resonanceOffset;
 	const centsTotal = cents + semitones * 100;
-	const centsRounded = centsTotal | 0;
-	if (centsRounded !== voice.tuningCents) {
-		voice.tuningCents = centsRounded;
+	if (centsTotal !== voice.tuningCents) {
+		voice.tuningCents = centsTotal;
 		voice.tuningRatio = Math.pow(2, centsTotal / 1200);
 	}
 	const gainTarget = cbAttenuationToGain(modulated[GeneratorTypes.initialAttenuation]) * cbAttenuationToGain(volumeExcursionCentibels);
@@ -7785,6 +7784,7 @@ function noteOn(midiNote, velocity, emit = true, instance) {
 		if (instance) {
 			voice.instanceId = instance.id;
 			voice.instancePitchWheel = instance.initialPitch;
+			voice.instanceBaseTuningCents = instance.baseTuningCents;
 			this.synthCore.attachVoiceToInstance(instance.id, voice);
 		}
 		voice.wavetable = voice.oscillators[this._systemParameters.interpolationType ?? this.synthCore.systemParameters.interpolationType];
@@ -14912,6 +14912,8 @@ var Voice = class {
 	instanceId;
 	/** A voice-local pitch wheel that remains live during the release tail. */
 	instancePitchWheel;
+	/** A per-instance cents offset that remains live during the release tail. */
+	instanceBaseTuningCents = 0;
 	/**
 	* Indicates if the voice has rendered at least one buffer.
 	* Used for exclusive class to prevent killing voices set on the same note.
@@ -15061,6 +15063,7 @@ var Voice = class {
 		this.isActive = true;
 		this.instanceId = void 0;
 		this.instancePitchWheel = void 0;
+		this.instanceBaseTuningCents = 0;
 		this.isInRelease = false;
 		this.hasRendered = false;
 		this.isHeld = false;
@@ -19541,17 +19544,19 @@ var SynthesizerCore = class {
 	noteInstanceStatus(id) {
 		return this.activeNoteInstance(id) ? "active" : "ended";
 	}
-	noteOnInstance(channel, midiNote, velocity, initialPitch) {
+	noteOnInstance(channel, midiNote, velocity, initialPitch, baseTuningCents) {
 		if (!Number.isInteger(channel) || channel < 0 || channel >= this.midiChannels.length) throw new Error(`Invalid note instance channel ${channel}`);
 		if (!Number.isInteger(midiNote) || midiNote < 0 || midiNote > 127) throw new Error(`Invalid note instance MIDI key ${midiNote}`);
 		if (!Number.isInteger(velocity) || velocity < 1 || velocity > 127) throw new Error(`Invalid note instance velocity ${velocity}`);
 		if (!Number.isInteger(initialPitch) || initialPitch < 0 || initialPitch > 16383) throw new Error(`Invalid note instance pitch ${initialPitch}`);
+		if (!Number.isFinite(baseTuningCents)) throw new TypeError(`Invalid note instance base tuning ${baseTuningCents}`);
 		const id = this.nextNoteInstanceId++;
 		this.noteInstances.set(id, /* @__PURE__ */ new Set());
 		try {
 			this.midiChannels[channel].noteOn(midiNote, velocity, true, {
 				id,
-				initialPitch
+				initialPitch,
+				baseTuningCents
 			});
 		} catch (error) {
 			this.invalidateNoteInstance(id);
@@ -20592,14 +20597,15 @@ var SpessaSynthProcessor = class {
 	* Attacks one note and returns an opaque identity shared by its sample layers.
 	* The channel is zero-based, MIDI key is 0-127, velocity is 1-127, and
 	* initialPitch is a 14-bit pitch-wheel value (0-16383, center 8192).
+	* baseTuningCents is a finite per-instance tuning offset in cents.
 	* Pitch follows the channel's bend range and overrides its wheel for this
 	* attack only. The attack does not enter the MIDI key note-off or mono
 	* pressed-key queues; control it through the returned identity.
 	* If no voice starts (for example a muted channel), the identity is ended.
 	* Invalid arguments and a layered attack above a fixed voice cap throw.
 	*/
-	noteOnInstance(channel, midiNote, velocity, initialPitch) {
-		return this.synthCore.noteOnInstance(channel, midiNote, velocity, initialPitch);
+	noteOnInstance(channel, midiNote, velocity, initialPitch, baseTuningCents) {
+		return this.synthCore.noteOnInstance(channel, midiNote, velocity, initialPitch, baseTuningCents);
 	}
 	/**
 	* Sets the 14-bit pitch-wheel value for all live layers, including release

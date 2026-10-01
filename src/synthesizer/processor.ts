@@ -133,6 +133,7 @@ export class SpessaSynthProcessor {
      * Attacks one note and returns an opaque identity shared by its sample layers.
      * The channel is zero-based, MIDI key is 0-127, velocity is 1-127, and
      * initialPitch is a 14-bit pitch-wheel value (0-16383, center 8192).
+     * baseTuningCents is a finite per-instance tuning offset in cents.
      * Pitch follows the channel's bend range and overrides its wheel for this
      * attack only. The attack does not enter the MIDI key note-off or mono
      * pressed-key queues; control it through the returned identity.
@@ -143,13 +144,15 @@ export class SpessaSynthProcessor {
         channel: number,
         midiNote: number,
         velocity: number,
-        initialPitch: number
+        initialPitch: number,
+        baseTuningCents: number
     ): number {
         return this.synthCore.noteOnInstance(
             channel,
             midiNote,
             velocity,
-            initialPitch
+            initialPitch,
+            baseTuningCents
         );
     }
 
