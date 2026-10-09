@@ -2100,12 +2100,14 @@ declare class SoundBankManager {
    */
   soundBankList: SoundBankManagerListEntry[];
   private readonly presetListChangeCallback;
+  private readonly preservingPresetListChangeCallback;
   private selectablePresetList;
   /**
    * @param presetListChangeCallback Supplied by the parent synthesizer class,
    * this is called whenever the preset list changes.
+   * @param preservingPresetListChangeCallback Refreshes inventory without resetting live channels.
    */
-  constructor(presetListChangeCallback: () => unknown);
+  constructor(presetListChangeCallback: () => unknown, preservingPresetListChangeCallback: () => unknown);
   private _presetList;
   /**
    * The list of all presets in the sound bank stack.
@@ -2133,8 +2135,15 @@ declare class SoundBankManager {
    * @param bankOffset the bank offset of the sound bank.
    */
   addSoundBank(font: BasicSoundBank, id: string, bankOffset?: number): void;
+  /**
+   * Registers banks in one inventory update without reselecting channels or resetting voices.
+   * IDs must be unique. Banks may share an offset when their selectable patches do not collide.
+   * @param soundBanks The new banks and their IDs and bank offsets.
+   */
+  addSoundBanksPreservingVoices(soundBanks: readonly SoundBankManagerListEntry[]): void;
   destroy(): void;
   private generatePresetList;
+  private createPresetInventory;
 }
 //#endregion
 //#region src/synthesizer/audio_engine/key_modifier_manager.d.ts

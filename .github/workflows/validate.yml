@@ -1,0 +1,19 @@
+name: Build and source checks
+
+on: [push, pull_request]
+
+permissions:
+    contents: read
+
+jobs:
+    validate:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: "24"
+                  cache: npm
+            - run: npm ci
+            - run: npm run build
+            - run: npx prettier --check src/synthesizer/audio_engine/sound_bank_manager.ts src/synthesizer/audio_engine/synthesizer_core.ts tests/synth/preserving_bank_registration*.ts

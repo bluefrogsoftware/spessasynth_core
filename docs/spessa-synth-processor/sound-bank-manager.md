@@ -35,6 +35,28 @@ function addSoundBank(soundBank: BasicSoundBank, id: string, bankOffset = 0) {}
 - `id` - the ID of the sound bank. If it already exists, it will be replaced.
 - `bankOffset` - the bank number offset of the sound bank, set to 0 for no change.
 
+This regular method refreshes the preset inventory using the synthesizer's normal
+reset behavior. For additions while notes are playing, use the batch method below.
+
+### addSoundBanksPreservingVoices
+
+Registers one or more banks as a single inventory update without reselecting
+channel presets, resetting controllers, or invalidating active note instances.
+IDs must be unique across the manager and batch. Offsets may be shared when the
+resulting selectable MIDI patch identities remain unique. A failed validation
+leaves current registrations and presets unchanged. This method does not select
+a channel's new bank; explicitly set the desired patch after registration.
+Registered banks remain owned by the manager until it is destroyed.
+
+```ts
+function addSoundBanksPreservingVoices(
+    soundBanks: readonly SoundBankManagerListEntry[]
+) {}
+```
+
+Each entry contains `id`, `soundBank`, and `bankOffset`, matching the
+`soundBankList` entry shape.
+
 ### getPreset
 
 This method gets a given preset from the sound bank stack.

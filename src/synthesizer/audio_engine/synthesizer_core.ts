@@ -232,7 +232,8 @@ export class SynthesizerCore {
      * The sound bank manager, which manages all sound banks and presets.
      */
     public soundBankManager: SoundBankManager = new SoundBankManager(
-        this.updatePresetList.bind(this)
+        this.updatePresetList.bind(this),
+        this.updatePresetListPreservingVoices.bind(this)
     );
     /**
      * Handles the custom key overrides: velocity and preset
@@ -1607,6 +1608,13 @@ export class SynthesizerCore {
             c.setSystemParameter("presetLock", lock);
         }
         this.reset();
+    }
+
+    private updatePresetListPreservingVoices() {
+        const mainFont = this.soundBankManager.presetList;
+        this.clearCache();
+        this.callEvent("presetListChange", mainFont);
+        this.getDefaultPresets();
     }
 
     private getDefaultPresets() {
