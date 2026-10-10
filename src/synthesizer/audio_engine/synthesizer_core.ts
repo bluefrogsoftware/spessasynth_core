@@ -68,6 +68,130 @@ export class SynthesizerCore {
      * Voices of this synthesizer, as a fixed voice pool.
      */
     public readonly voices: Voice[] = [];
+    private readonly noteInstances = new Map<number, Set<Voice>>();
+    private nextNoteInstanceId = 1;
+
+    public attachVoiceToInstance(id: number, voice: Voice) {
+        const layers = this.noteInstances.get(id);
+        if (!layers) throw new Error(`Unknown note instance ${id}`);
+        layers.add(voice);
+    }
+
+    private invalidateNoteInstance(id: number) {
+        const layers = this.noteInstances.get(id);
+        if (!layers) return;
+        for (const layer of layers) {
+            if (layer.instanceId === id) layer.isActive = false;
+        }
+        this.noteInstances.delete(id);
+    }
+
+    private pruneNoteInstances() {
+        for (const [id, layers] of this.noteInstances) {
+            let active = false;
+            for (const voice of layers) {
+                if (voice.isActive && voice.instanceId === id) {
+                    active = true;
+                    break;
+                }
+            }
+            if (!active) this.noteInstances.delete(id);
+        }
+    }
+
+    private activeNoteInstance(id: number): Set<Voice> | undefined {
+        if (
+            !Number.isSafeInteger(id) ||
+            id < 1 ||
+            id >= this.nextNoteInstanceId
+        ) {
+            throw new Error(`Unknown note instance ${id}`);
+        }
+        this.pruneNoteInstances();
+        return this.noteInstances.get(id);
+    }
+
+    public noteInstanceStatus(id: number): "active" | "ended" {
+        return this.activeNoteInstance(id) ? "active" : "ended";
+    }
+
+    public noteOnInstance(
+        channel: number,
+        midiNote: number,
+        velocity: number,
+        initialPitch: number,
+        baseTuningCents: number
+    ): number {
+        if (
+            !Number.isInteger(channel) ||
+            channel < 0 ||
+            channel >= this.midiChannels.length
+        ) {
+            throw new Error(`Invalid note instance channel ${channel}`);
+        }
+        if (!Number.isInteger(midiNote) || midiNote < 0 || midiNote > 127) {
+            throw new Error(`Invalid note instance MIDI key ${midiNote}`);
+        }
+        if (!Number.isInteger(velocity) || velocity < 1 || velocity > 127) {
+            throw new Error(`Invalid note instance velocity ${velocity}`);
+        }
+        if (
+            !Number.isInteger(initialPitch) ||
+            initialPitch < 0 ||
+            initialPitch > 16_383
+        ) {
+            throw new Error(`Invalid note instance pitch ${initialPitch}`);
+        }
+        if (!Number.isFinite(baseTuningCents)) {
+            throw new TypeError(
+                `Invalid note instance base tuning ${baseTuningCents}`
+            );
+        }
+        const id = this.nextNoteInstanceId++;
+        this.noteInstances.set(id, new Set());
+        try {
+            this.midiChannels[channel].noteOn(midiNote, velocity, true, {
+                id,
+                initialPitch,
+                baseTuningCents
+            });
+        } catch (error) {
+            this.invalidateNoteInstance(id);
+            throw error;
+        }
+        if (this.noteInstances.get(id)?.size === 0)
+            this.noteInstances.delete(id);
+        return id;
+    }
+
+    public pitchNoteInstance(id: number, pitch: number): "active" | "ended" {
+        if (!Number.isInteger(pitch) || pitch < 0 || pitch > 16_383) {
+            throw new Error(`Invalid note instance pitch ${pitch}`);
+        }
+        const layers = this.activeNoteInstance(id);
+        if (!layers) return "ended";
+        for (const voice of layers) {
+            if (!voice.isActive || voice.instanceId !== id) continue;
+            voice.instancePitchWheel = pitch;
+            this.midiChannels[voice.channel].updateInstancePitch(voice);
+        }
+        return "active";
+    }
+
+    public releaseNoteInstance(id: number): "active" | "ended" {
+        const layers = this.activeNoteInstance(id);
+        if (!layers) return "ended";
+        for (const voice of layers) {
+            if (
+                voice.isActive &&
+                voice.instanceId === id &&
+                !voice.isInRelease
+            ) {
+                voice.releaseVoice(this.currentTime);
+            }
+        }
+        return "active";
+    }
     /**
      * All MIDI channels of the synthesizer.
      */
@@ -108,7 +232,8 @@ export class SynthesizerCore {
      * The sound bank manager, which manages all sound banks and presets.
      */
     public soundBankManager: SoundBankManager = new SoundBankManager(
-        this.updatePresetList.bind(this)
+        this.updatePresetList.bind(this),
+        this.updatePresetListPreservingVoices.bind(this)
     );
     /**
      * Handles the custom key overrides: velocity and preset
@@ -440,7 +565,7 @@ export class SynthesizerCore {
      * Assigns the first available voice for use.
      * If none available, will assign priorities.
      */
-    public assignVoice() {
+    public assignVoice(protectedInstanceId?: number) {
         for (let i = 0; i < this.systemParameters.voiceCap; i++) {
             const v = this.voices[i];
             if (!v.isActive) {
@@ -465,11 +590,23 @@ export class SynthesizerCore {
             return v;
         }
         this.assignVoicePriorities();
-        let lowest = this.voices[0];
+        let lowest: Voice | undefined;
         for (let i = 0; i < this.systemParameters.voiceCap; i++) {
             const v = this.voices[i];
-            if (v.priority < lowest.priority) lowest = v;
+            if (
+                protectedInstanceId !== undefined &&
+                v.instanceId === protectedInstanceId
+            )
+                continue;
+            if (!lowest || v.priority < lowest.priority) lowest = v;
         }
+        if (!lowest) {
+            throw new Error(
+                `No voice slot available without stealing note instance ${protectedInstanceId}`
+            );
+        }
+        if (lowest.instanceId !== undefined)
+            this.invalidateNoteInstance(lowest.instanceId);
         lowest.priority = Infinity;
         return lowest;
     }
@@ -479,6 +616,7 @@ export class SynthesizerCore {
      * @param force if true, all notes are stopped immediately, otherwise they are stopped gracefully.
      */
     public stopAllChannels(force: boolean) {
+        if (force) this.noteInstances.clear();
         SpessaLog.info("%cStop all received!", ConsoleColors.info);
         for (const channel of this.midiChannels) {
             channel.stopAllNotes(force);
@@ -530,6 +668,7 @@ export class SynthesizerCore {
     }
 
     public destroySynthProcessor() {
+        this.noteInstances.clear();
         this.voices.length = 0;
         for (const c of this.midiChannels) c.destroy();
         this.clearCache();
@@ -593,6 +732,9 @@ export class SynthesizerCore {
      * @param system The MIDI system to reset the synthesizer to. Defaults to `gs`.
      */
     public reset(system: MIDISystem = DEFAULT_SYNTH_MODE) {
+        for (const id of this.noteInstances.keys()) {
+            this.invalidateNoteInstance(id);
+        }
         // Call here because there are returns in this function.
         this.callEvent("reset", system);
         // Reset MIDI parameters
@@ -748,6 +890,8 @@ export class SynthesizerCore {
             ch.voiceCount++;
             this._voiceCount++;
         }
+
+        this.pruneNoteInstances();
 
         // Process effects
         if (this.systemParameters.effectsEnabled) {
@@ -1464,6 +1608,13 @@ export class SynthesizerCore {
             c.setSystemParameter("presetLock", lock);
         }
         this.reset();
+    }
+
+    private updatePresetListPreservingVoices() {
+        const mainFont = this.soundBankManager.presetList;
+        this.clearCache();
+        this.callEvent("presetListChange", mainFont);
+        this.getDefaultPresets();
     }
 
     private getDefaultPresets() {

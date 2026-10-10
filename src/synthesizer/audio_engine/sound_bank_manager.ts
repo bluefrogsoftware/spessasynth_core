@@ -35,15 +35,22 @@ export class SoundBankManager {
      */
     public soundBankList: SoundBankManagerListEntry[] = [];
     private readonly presetListChangeCallback: () => unknown;
+    private readonly preservingPresetListChangeCallback: () => unknown;
 
     private selectablePresetList: SoundBankManagerPreset[] = [];
 
     /**
      * @param presetListChangeCallback Supplied by the parent synthesizer class,
      * this is called whenever the preset list changes.
+     * @param preservingPresetListChangeCallback Refreshes inventory without resetting live channels.
      */
-    public constructor(presetListChangeCallback: () => unknown) {
+    public constructor(
+        presetListChangeCallback: () => unknown,
+        preservingPresetListChangeCallback: () => unknown
+    ) {
         this.presetListChangeCallback = presetListChangeCallback;
+        this.preservingPresetListChangeCallback =
+            preservingPresetListChangeCallback;
     }
 
     private _presetList: MIDIPatchFull[] = [];
@@ -115,6 +122,68 @@ export class SoundBankManager {
     }
 
     /**
+     * Registers banks in one inventory update without reselecting channels or resetting voices.
+     * IDs must be unique. Banks may share an offset when their selectable patches do not collide.
+     * @param soundBanks The new banks and their IDs and bank offsets.
+     */
+    public addSoundBanksPreservingVoices(
+        soundBanks: readonly SoundBankManagerListEntry[]
+    ) {
+        const ids = new Set(this.soundBankList.map((entry) => entry.id));
+        for (const entry of soundBanks) {
+            if (entry.id.length === 0) {
+                throw new Error("Sound bank IDs must not be empty");
+            }
+            if (
+                !Number.isSafeInteger(entry.bankOffset) ||
+                entry.bankOffset < 0 ||
+                entry.bankOffset > 127
+            ) {
+                throw new Error(
+                    `Invalid bank offset for sound bank "${entry.id}"`
+                );
+            }
+            if (ids.has(entry.id)) {
+                throw new Error(`Duplicate sound bank ID "${entry.id}"`);
+            }
+            ids.add(entry.id);
+        }
+
+        const selectablePatches = new Set(
+            this.selectablePresetList.map((preset) => preset.toMIDIString())
+        );
+        for (const entry of soundBanks) {
+            const entryPatches = new Set<string>();
+            for (const preset of entry.soundBank.presets) {
+                const selectablePreset = new SoundBankManagerPreset(
+                    preset,
+                    entry.bankOffset
+                );
+                const patch = selectablePreset.toMIDIString();
+                if (selectablePatches.has(patch) || entryPatches.has(patch)) {
+                    throw new Error(
+                        `Duplicate selectable MIDI preset "${patch}"`
+                    );
+                }
+                entryPatches.add(patch);
+            }
+            for (const patch of entryPatches) {
+                selectablePatches.add(patch);
+            }
+        }
+
+        const candidateSoundBankList = [...this.soundBankList, ...soundBanks];
+        const candidateInventory = this.createPresetInventory(
+            candidateSoundBankList
+        );
+
+        this.soundBankList = candidateSoundBankList;
+        this.selectablePresetList = candidateInventory.selectablePresetList;
+        this._presetList = candidateInventory.presetList;
+        this.preservingPresetListChangeCallback();
+    }
+
+    /**
      * Gets a given preset from the sound bank stack.
      * @param patch The MIDI patch to search for.
      * @param system The MIDI system to select the preset for.
@@ -148,10 +217,19 @@ export class SoundBankManager {
     }
 
     private generatePresetList() {
+        const inventory = this.createPresetInventory(this.soundBankList);
+        this.selectablePresetList = inventory.selectablePresetList;
+        this._presetList = inventory.presetList;
+        this.presetListChangeCallback();
+    }
+
+    private createPresetInventory(
+        soundBankList: readonly SoundBankManagerListEntry[]
+    ) {
         const presetList = new Array<SoundBankManagerPreset>();
 
         const addedPresets = new Set<string>();
-        for (const s of this.soundBankList) {
+        for (const s of soundBankList) {
             const bank = s.soundBank;
             const bankOffset = s.bankOffset;
             for (const p of bank.presets) {
@@ -166,8 +244,7 @@ export class SoundBankManager {
             }
         }
         presetList.sort(MIDIPatchTools.compare.bind(MIDIPatchTools));
-        this.selectablePresetList = presetList;
-        this._presetList = presetList.map((p) => {
+        const midiPresetList = presetList.map((p) => {
             return {
                 bankMSB: p.bankMSB,
                 bankLSB: p.bankLSB,
@@ -177,6 +254,6 @@ export class SoundBankManager {
                 isDrum: p.isDrum
             };
         });
-        this.presetListChangeCallback();
+        return { selectablePresetList: presetList, presetList: midiPresetList };
     }
 }

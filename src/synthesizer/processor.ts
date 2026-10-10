@@ -130,6 +130,56 @@ export class SpessaSynthProcessor {
     public readonly noteOff: (channel: number, midiNote: number) => void;
 
     /**
+     * Attacks one note and returns an opaque identity shared by its sample layers.
+     * The channel is zero-based, MIDI key is 0-127, velocity is 1-127, and
+     * initialPitch is a 14-bit pitch-wheel value (0-16383, center 8192).
+     * baseTuningCents is a finite per-instance tuning offset in cents.
+     * Pitch follows the channel's bend range and overrides its wheel for this
+     * attack only. The attack does not enter the MIDI key note-off or mono
+     * pressed-key queues; control it through the returned identity.
+     * If no voice starts (for example a muted channel), the identity is ended.
+     * Invalid arguments and a layered attack above a fixed voice cap throw.
+     */
+    public noteOnInstance(
+        channel: number,
+        midiNote: number,
+        velocity: number,
+        initialPitch: number,
+        baseTuningCents: number
+    ): number {
+        return this.synthCore.noteOnInstance(
+            channel,
+            midiNote,
+            velocity,
+            initialPitch,
+            baseTuningCents
+        );
+    }
+
+    /**
+     * Sets the 14-bit pitch-wheel value for all live layers, including release
+     * tails. Returns "active" while a layer is live or "ended" after all end.
+     * Unknown identities and invalid pitch values throw.
+     */
+    public pitchNoteInstance(id: number, pitch: number): "active" | "ended" {
+        return this.synthCore.pitchNoteInstance(id, pitch);
+    }
+
+    /**
+     * Starts envelope release on all live layers. Returns "active" while any
+     * layer remains live, including its release tail, or "ended" otherwise.
+     * Unknown identities throw.
+     */
+    public releaseNoteInstance(id: number): "active" | "ended" {
+        return this.synthCore.releaseNoteInstance(id);
+    }
+
+    /** Returns "ended" once every layer stops sounding. Unknown identities throw. */
+    public noteInstanceStatus(id: number): "active" | "ended" {
+        return this.synthCore.noteInstanceStatus(id);
+    }
+
+    /**
      * Executes a MIDI Poly Pressure (Aftertouch) message on the specified channel.
      * This differs from the Channel Pressure in that it's per-note and not for the whole channel.
      * @param channel The MIDI channel to send the poly pressure on.

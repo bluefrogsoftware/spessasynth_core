@@ -1,5 +1,6 @@
 import { DEFAULT_DRUM_REVERB, resetChannelInternal, resetRP15 } from "./reset";
 import { renderVoice } from "./render_voice";
+import type { Voice } from "../voice/voice";
 import { controllerChange } from "./controller_change";
 import { dataEntry } from "./data_entry";
 import { noteOn } from "./note_on";
@@ -597,6 +598,11 @@ export class MIDIChannel {
             // Recompute only specific modulators
             this.computeModulatorsAll(0, ModulatorControllerSources.pitchWheel);
         }
+    }
+
+    /** Recompute the pitch source for one note instance voice only. */
+    public updateInstancePitch(voice: Voice) {
+        this.computeModulators(voice, 0, ModulatorControllerSources.pitchWheel);
     }
 
     /**

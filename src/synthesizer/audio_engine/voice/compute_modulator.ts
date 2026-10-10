@@ -65,7 +65,7 @@ export function computeModulator(
     if (modulator.isModWheelModulator)
         /*
         The modulation Depth is in cents, convert to a multiplier.
-        
+
         The MIDI specification assumes the default modulation depth is 50 cents,
         but it may vary for different sound banks.
         For example, if you want a modulation depth of 100 cents,
@@ -103,9 +103,11 @@ export function computeModulators(
     }
     const modulatedGenerators = voice.modulatedGenerators;
 
-    const pitch = this.perNotePitch
-        ? this.pitchWheels[voice.midiNote]
-        : this._midiParameters.pitchWheel;
+    const pitch =
+        voice.instancePitchWheel ??
+        (this.perNotePitch
+            ? this.pitchWheels[voice.midiNote]
+            : this._midiParameters.pitchWheel);
 
     if (sourceUsesCC === -1) {
         // All modulators mode: compute all modulators
