@@ -187,7 +187,16 @@ export class SynthesizerCore {
                 voice.instanceId === id &&
                 !voice.isInRelease
             ) {
-                voice.releaseVoice(this.currentTime);
+                const channel = this.midiChannels[voice.channel];
+                if (
+                    channel.midiControllers[MIDIControllers.sustainPedal] >=
+                        8192 &&
+                    channel.midiParameters.polyMode
+                ) {
+                    voice.isHeld = true;
+                } else {
+                    voice.releaseVoice(this.currentTime);
+                }
             }
         }
         return "active";

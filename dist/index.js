@@ -19619,7 +19619,11 @@ var SynthesizerCore = class {
 	releaseNoteInstance(id) {
 		const layers = this.activeNoteInstance(id);
 		if (!layers) return "ended";
-		for (const voice of layers) if (voice.isActive && voice.instanceId === id && !voice.isInRelease) voice.releaseVoice(this.currentTime);
+		for (const voice of layers) if (voice.isActive && voice.instanceId === id && !voice.isInRelease) {
+			const channel = this.midiChannels[voice.channel];
+			if (channel.midiControllers[MIDIControllers.sustainPedal] >= 8192 && channel.midiParameters.polyMode) voice.isHeld = true;
+			else voice.releaseVoice(this.currentTime);
+		}
 		return "active";
 	}
 	/**
